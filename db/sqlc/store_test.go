@@ -2,7 +2,6 @@ package db
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"testing"
 
@@ -18,40 +17,43 @@ func TestTransferTrxn(t *testing.T) {
 	log.Printf(">>before trxn :%v %v\n", account1.Balance, account2.Balance)
 
 	// run n concurrent transfer transfer
-	numberOfTransferToMake := 2
-	amountToTransfer := int64(10)
+	n := 2
+	amount := int64(10)
+
 	errs := make(chan error)
 	results := make(chan TransferTrxResult)
 	done := make(chan bool)
+	existed := make(map[int]bool)
 
-	for i := 0; i < numberOfTransferToMake; i++ {
+	for i := 0; i < n; i++ {
 		i := i
-		fromAccountID := account2.ID
-		toAccountID := account1.ID
+		fromAccountID := account1.ID
+		toAccountID := account2.ID
 
-		if i%2 == 1 {
-			fromAccountID = account2.ID
-			toAccountID = account1.ID
-		}
-		trxnHash := fmt.Sprintf("tx %d", i+1)
+		// if i%2 == 1 {
+		// 	fromAccountID = account2.ID
+		// 	toAccountID = account1.ID
+		// }
+
 		go func(i int) {
-			ctx := context.WithValue(context.Background(), txKey, trxnHash)
-			result, err := store.PerformTransactionTrxn(ctx, TransferTxnParams{
+
+			txn := TransferTxnParams{
 				FromAccountID: fromAccountID,
 				ToAccountID:   toAccountID,
-				Amount:        amountToTransfer,
-			})
+				Amount:        amount,
+			}
 
-			results <- result
+			result, err := store.PerformTransactionTrxn(context.Background(), txn)
+
 			errs <- err
+			results <- result
 
-			if i == numberOfTransferToMake-1 {
+			if i == n-1 {
 				done <- true
 			}
 		}(i)
 	}
 
-	existed := make(map[int]bool)
 	terminate := false
 	for {
 		select {
@@ -62,7 +64,7 @@ func TestTransferTrxn(t *testing.T) {
 			transfer := result.Transfer
 			assert.Equal(t, account1.ID, transfer.FromAccountID)
 			assert.Equal(t, account2.ID, transfer.ToAccountID)
-			assert.Equal(t, amountToTransfer, transfer.Amount)
+			assert.Equal(t, amount, transfer.Amount)
 			assert.NotZero(t, transfer.ID)
 			assert.NotZero(t, transfer.CreatedAt)
 
@@ -72,7 +74,7 @@ func TestTransferTrxn(t *testing.T) {
 			fromEntry := result.FromEntry
 			assert.NotEmpty(t, fromEntry)
 			assert.Equal(t, account1.ID, fromEntry.AccountID)
-			assert.Equal(t, -amountToTransfer, fromEntry.Amount)
+			assert.Equal(t, -amount, fromEntry.Amount)
 			assert.NotZero(t, fromEntry.ID)
 			assert.NotZero(t, fromEntry.CreatedAt)
 
@@ -82,7 +84,7 @@ func TestTransferTrxn(t *testing.T) {
 			toEntry := result.ToEntry
 			assert.NotEmpty(t, toEntry)
 			assert.Equal(t, account2.ID, toEntry.AccountID)
-			assert.Equal(t, amountToTransfer, toEntry.Amount)
+			assert.Equal(t, amount, toEntry.Amount)
 			assert.NotZero(t, toEntry.ID)
 			assert.NotZero(t, toEntry.CreatedAt)
 
@@ -98,21 +100,21 @@ func TestTransferTrxn(t *testing.T) {
 			assert.NotEmpty(t, toAccount)
 			assert.Equal(t, account2.ID, toAccount.ID)
 
-			// check the account balance
-			log.Printf(">>trxn :%v %v\n", account1.Balance, account2.Balance)
+			// // check the account balance
+			log.Printf(">> trxn :%v %v\n", fromAccount.Balance, toAccount.Balance)
 			diff1 := account1.Balance - fromAccount.Balance
 			diff2 := toAccount.Balance - account2.Balance
 
 			assert.Equal(t, diff1, diff2)
 			assert.True(t, diff1 > 0)
-			assert.True(t, diff1%amountToTransfer == 0)
+			assert.True(t, diff1%amount == 0)
 
-			k := int(diff1 / amountToTransfer)
-			assert.True(t, k >= 1 && k <= numberOfTransferToMake)
+			k := int(diff1 / amount)
+			assert.True(t, k >= 1 && k <= n)
 			assert.NotContains(t, existed, k)
 			existed[k] = true
-		case <-done:
-			terminate = true
+		case completed := <-done:
+			terminate = completed
 		}
 		if terminate {
 			break
@@ -123,7 +125,7 @@ func TestTransferTrxn(t *testing.T) {
 	assert.NoError(t, err)
 	updatedAccount2, err := testQueries.GetAccount(context.Background(), account2.ID)
 	assert.NoError(t, err)
-	log.Printf(">>trxn :%v %v\n", account1.Balance, account2.Balance)
-	assert.Equal(t, account1.Balance-int64(numberOfTransferToMake)*amountToTransfer, updatedAccount1.Balance)
-	assert.Equal(t, account2.Balance+int64(numberOfTransferToMake)*amountToTransfer, updatedAccount2.Balance)
+	log.Printf(">> after trxn :%v %v\n", account1.Balance, account2.Balance)
+	assert.Equal(t, account1.Balance-int64(n)*amount, updatedAccount1.Balance)
+	assert.Equal(t, account2.Balance+int64(n)*amount, updatedAccount2.Balance)
 }

@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 )
 
@@ -29,7 +30,6 @@ func (store *Store) executeTrxn(ctx context.Context, fn func(*Queries) error) er
 
 	q := New(trxn)
 	err = fn(q)
-
 	if err != nil {
 		if rberr := trxn.Rollback(); err != nil {
 			return fmt.Errorf("[ERROR] transaction rollback error: %v , rb err: %v ", err, rberr)
@@ -56,27 +56,20 @@ type TransferTrxResult struct {
 	ToEntry     Entry    `json:"to_entry"`
 }
 
-var txKey = struct{}{}
-
 // PerformTransactionTrxn performs a money from one account to the other .
 // It creates a transfer record , add account entries and update accounts balance within a single database transaction
 func (store *Store) PerformTransactionTrxn(ctx context.Context, arg TransferTxnParams) (TransferTrxResult, error) {
 
 	var result TransferTrxResult
 
-	err := store.executeTrxn(ctx, func(q *Queries) error {
+	transactFnx := func(q *Queries) error {
 		var err error
 
-		trxnHash := ctx.Value(txKey)
+		transfer := CreateTransferParams{}
+		bt, _ := json.Marshal(arg)
+		_ = json.Unmarshal(bt, &transfer)
 
-		transfer := &CreateTransferParams{
-			FromAccountID: arg.FromAccountID,
-			ToAccountID:   arg.ToAccountID,
-			Amount:        arg.Amount,
-		}
-
-		fmt.Println(trxnHash, "create transfer")
-		result.Transfer, err = q.CreateTransfer(ctx, *transfer)
+		result.Transfer, err = q.CreateTransfer(ctx, transfer)
 
 		if err != nil {
 			return err
@@ -139,7 +132,8 @@ func (store *Store) PerformTransactionTrxn(ctx context.Context, arg TransferTxnP
 		}
 
 		return nil
-	})
+	}
 
+	err := store.executeTrxn(ctx, transactFnx)
 	return result, err
 }
