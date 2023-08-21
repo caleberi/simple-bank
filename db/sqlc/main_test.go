@@ -6,12 +6,8 @@ import (
 	"os"
 	"testing"
 
+	"github.com/caleberi/simple-bank/pkg/utils"
 	_ "github.com/lib/pq"
-)
-
-const (
-	dbDriver = "postgres"
-	dbSource = "postgresql://root:secret@localhost:4600/simple_bank?sslmode=disable"
 )
 
 var db *sql.DB
@@ -19,7 +15,8 @@ var testQueries *Queries
 var err error
 
 func init() {
-	conn, err := sql.Open(dbDriver, dbSource)
+	cfg := utils.LoadConfig("../../", "dev", "env")
+	conn, err := sql.Open(cfg.DBDriver, cfg.DBSource)
 	if err != nil {
 		log.Fatal("[ERROR] error opening database connection: ", err)
 	}
