@@ -18,7 +18,11 @@ func main() {
 		log.Fatal("[ERROR] cannot connect to database :", err)
 	}
 	store := db.NewStore(conn)
-	server := api.NewServer(store)
+	server, err := api.NewServer(*cfg, store)
+
+	if err != nil {
+		log.Fatal("[ERROR] cannot create server :", err)
+	}
 
 	if err := server.Start(cfg.VBankAddr); err != nil {
 		log.Fatal("[ERROR] cannot start server :", err)
