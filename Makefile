@@ -8,6 +8,11 @@ migrateup:
 	migrate -path db/migrations -database "postgresql://root:secret@localhost:4600/simple_bank?sslmode=disable" -verbose up
 migratedown:
 	migrate -path db/migrations -database "postgresql://root:secret@localhost:4600/simple_bank?sslmode=disable" -verbose down
+migrateup_1:
+	migrate -path db/migrations -database "postgresql://root:secret@localhost:4600/simple_bank?sslmode=disable" -verbose up 1
+migratedown_1:
+	migrate -path db/migrations -database "postgresql://root:secret@localhost:4600/simple_bank?sslmode=disable" -verbose down 1
+
 sqlc:
 	sqlc generate
 test:
@@ -17,4 +22,4 @@ start_server:
 mock_db:
 	mockgen --build_flags=--mod=mod -package mockdb -destination db/mock/store.go github.com/caleberi/simple-bank/db/sqlc Store
 
-.PHONY: postgres createdb dropdb migrateup migratedown sqlc test start_server mock_db
+.PHONY: postgres createdb dropdb migrateup migratedown migrateup_1 migratedown_1 sqlc test start_server mock_db
