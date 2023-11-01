@@ -7,16 +7,17 @@ import (
 	"net/http"
 
 	db "github.com/caleberi/simple-bank/db/sqlc"
+	"github.com/caleberi/simple-bank/token"
 	"github.com/gin-gonic/gin"
+	"github.com/lib/pq"
 )
 
-type Pagination struct {
-	PageID   int32 `json:"page_id" binding:"required,min=1"`
-	PageSize int32 `json:"page_size" binding:"required,min=5,max=10"`
-}
+var (
+	ErrForeginKeyViolation = "foreign_key_violation"
+	ErrUniqueViolation     = "unique_violation"
+)
 
 type createAccountRequest struct {
-	Owner        string `json:"owner" binding:"required"`
 	CurrencyCode string `json:"currency_code" binding:"required,oneof=USD EUR GBP NGN AUD CAD CDF"`
 }
 
@@ -27,14 +28,22 @@ func (server *Server) createAccountHandler(ctx *gin.Context) {
 		return
 	}
 
+	authPayload := ctx.MustGet(authorizationPayloadKey).(*token.Payload)
 	arg := db.CreateAccountParams{
-		Owner:        request.Owner,
+		Owner:        authPayload.Username,
 		CurrencyCode: request.CurrencyCode,
 		Balance:      0,
 	}
 
 	account, err := server.store.CreateAccount(ctx, arg)
 	if err != nil {
+		if perr, ok := err.(*pq.Error); ok {
+			switch perr.Code.Name() {
+			case ErrForeginKeyViolation, ErrUniqueViolation:
+				ctx.JSON(http.StatusForbidden, errorResponse(err))
+				return
+			}
+		}
 		ctx.JSON(http.StatusInternalServerError, errorResponse(err))
 		return
 	}
@@ -63,11 +72,20 @@ func (server *Server) getAccountHandler(ctx *gin.Context) {
 		ctx.JSON(http.StatusInternalServerError, errorResponse(err))
 		return
 	}
+
+	authPayload := ctx.MustGet(authorizationPayloadKey).(*token.Payload)
+	if account.Owner != authPayload.Username {
+		err := errors.New("account doesn't belong to the authenticated user")
+		ctx.JSON(http.StatusUnauthorized, errorResponse(err))
+		return
+	}
+
 	ctx.JSON(http.StatusOK, successResponse("retrieved account successfully", account))
 }
 
 type listAccountsRequest struct {
-	Pagination
+	PageID   int32 `json:"page_id" binding:"required,min=1"`
+	PageSize int32 `json:"page_size" binding:"required,min=5,max=10"`
 }
 
 func (server *Server) listAccountHandler(ctx *gin.Context) {
@@ -78,8 +96,11 @@ func (server *Server) listAccountHandler(ctx *gin.Context) {
 		return
 	}
 
+	authPayload := ctx.MustGet(authorizationPayloadKey).(*token.Payload)
+
 	offset := (request.PageID - 1) * request.PageSize
 	arg := db.ListAccountsParams{
+		Owner:  authPayload.Username,
 		Offset: offset,
 		Limit:  request.PageSize,
 	}

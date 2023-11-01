@@ -14,6 +14,7 @@ import (
 	mockdb "github.com/caleberi/simple-bank/db/mock"
 	db "github.com/caleberi/simple-bank/db/sqlc"
 	"github.com/caleberi/simple-bank/pkg/utils"
+	"github.com/caleberi/simple-bank/token"
 	"github.com/golang/mock/gomock"
 	"github.com/stretchr/testify/require"
 )
@@ -24,46 +25,36 @@ type result struct {
 	Success bool        `json:"success"`
 }
 
-func generateRandomAccount() db.Account {
+func generateRandomAccount(owner string) db.Account {
 	return db.Account{
 		ID:           utils.RandomInt(1, 100),
-		Owner:        utils.RandomOwner(),
+		Owner:        owner,
 		Balance:      utils.RandomMoney(),
 		CurrencyCode: utils.RandomCurrencyCode(),
 	}
 }
 
 func Test_CreateAccount(t *testing.T) {
+	user, _ := randomUser(t)
+	account := generateRandomAccount(user.Username)
 
-	// create a new request body
-	accountId := utils.RandomInt(1, 100)
 	createAccountRequest := createAccountRequest{
-		Owner:        utils.RandomOwner(),
 		CurrencyCode: utils.RandomCurrencyCode(),
-	}
-
-	//  expect account creation results
-	account := db.Account{
-		ID:           accountId,
-		Balance:      0,
-		Owner:        createAccountRequest.Owner,
-		CurrencyCode: createAccountRequest.CurrencyCode,
-		CreatedAt:    time.Now(),
 	}
 
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 	store := mockdb.NewMockStore(ctrl)
 	store.EXPECT().CreateAccount(gomock.Any(), db.CreateAccountParams{
-		Owner:        createAccountRequest.Owner,
 		CurrencyCode: createAccountRequest.CurrencyCode,
 		Balance:      0,
+		Owner:        user.Username,
 	}).Times(1).Return(account, nil)
 
 	url := "/accounts"
 
 	//  new server with store
-	server := NewServer(store)
+	server := newTestServer(t, store)
 
 	buf := bytes.NewBuffer(nil)
 	encoder := json.NewEncoder(buf)
@@ -76,6 +67,7 @@ func Test_CreateAccount(t *testing.T) {
 	request.Header.Set("Content-Type", "application/json")
 	require.NoError(t, err)
 
+	addAuthorization(t, request, server.tokenGenerator, authorizationBearerType, user.Username, time.Minute)
 	server.router.ServeHTTP(recorder, request)
 
 	require.Equal(t, http.StatusOK, recorder.Code)
@@ -105,12 +97,14 @@ func Test_CreateAccount(t *testing.T) {
 }
 
 func Test_GetAccount(t *testing.T) {
-	account := generateRandomAccount()
+	user, _ := randomUser(t)
+	account := generateRandomAccount(user.Username)
 
 	testcases := []struct {
 		name          string
 		accountId     int64
 		buildStubs    func(store *mockdb.MockStore)
+		setupAuth     func(t *testing.T, request *http.Request, tokenMaker token.Maker)
 		checkResponse func(t *testing.T, recorder *httptest.ResponseRecorder)
 	}{
 		{
@@ -121,6 +115,9 @@ func Test_GetAccount(t *testing.T) {
 					GetAccount(gomock.Any(), gomock.Eq(account.ID)).
 					Times(1).
 					Return(account, nil)
+			},
+			setupAuth: func(t *testing.T, request *http.Request, tokenMaker token.Maker) {
+				addAuthorization(t, request, tokenMaker, authorizationBearerType, user.Username, time.Minute)
 			},
 			checkResponse: func(t *testing.T, recorder *httptest.ResponseRecorder) {
 				// check response status
@@ -137,6 +134,8 @@ func Test_GetAccount(t *testing.T) {
 					GetAccount(gomock.Any(), gomock.Eq(account.ID)).
 					Times(1).
 					Return(db.Account{}, sql.ErrNoRows)
+			}, setupAuth: func(t *testing.T, request *http.Request, tokenMaker token.Maker) {
+				addAuthorization(t, request, tokenMaker, authorizationBearerType, user.Username, time.Minute)
 			},
 			checkResponse: func(t *testing.T, recorder *httptest.ResponseRecorder) {
 				// check response status
@@ -152,6 +151,9 @@ func Test_GetAccount(t *testing.T) {
 					Times(1).
 					Return(db.Account{}, sql.ErrConnDone)
 			},
+			setupAuth: func(t *testing.T, request *http.Request, tokenMaker token.Maker) {
+				addAuthorization(t, request, tokenMaker, authorizationBearerType, user.Username, time.Minute)
+			},
 			checkResponse: func(t *testing.T, recorder *httptest.ResponseRecorder) {
 				// check response status
 				require.Equal(t, http.StatusInternalServerError, recorder.Code)
@@ -165,9 +167,41 @@ func Test_GetAccount(t *testing.T) {
 					GetAccount(gomock.Any(), gomock.Any()).
 					Times(0)
 			},
+			setupAuth: func(t *testing.T, request *http.Request, tokenMaker token.Maker) {
+				addAuthorization(t, request, tokenMaker, authorizationBearerType, user.Username, time.Minute)
+			},
 			checkResponse: func(t *testing.T, recorder *httptest.ResponseRecorder) {
 				// check response status
 				require.Equal(t, http.StatusBadRequest, recorder.Code)
+			},
+		},
+		{
+			name:      "UnauthorizedUser",
+			accountId: account.ID,
+			buildStubs: func(store *mockdb.MockStore) {
+				store.EXPECT().
+					GetAccount(gomock.Any(), gomock.Any()).
+					Times(1)
+			},
+			setupAuth: func(t *testing.T, request *http.Request, tokenMaker token.Maker) {
+				addAuthorization(t, request, tokenMaker, authorizationBearerType, "unauthorized_user", time.Minute)
+			},
+			checkResponse: func(t *testing.T, recorder *httptest.ResponseRecorder) {
+				// check response status
+				require.Equal(t, http.StatusUnauthorized, recorder.Code)
+			},
+		}, {
+			name:      "NoAuthorization",
+			accountId: account.ID,
+			buildStubs: func(store *mockdb.MockStore) {
+				store.EXPECT().
+					GetAccount(gomock.Any(), gomock.Any()).
+					Times(0)
+			},
+			setupAuth: func(t *testing.T, request *http.Request, tokenMaker token.Maker) {},
+			checkResponse: func(t *testing.T, recorder *httptest.ResponseRecorder) {
+				// check response status
+				require.Equal(t, http.StatusUnauthorized, recorder.Code)
 			},
 		},
 	}
@@ -180,14 +214,17 @@ func Test_GetAccount(t *testing.T) {
 			tc.buildStubs(store)
 
 			//  new server with store
-			server := NewServer(store)
+			server := newTestServer(t, store)
 			// build  response struct
 			recorder := httptest.NewRecorder()
 
 			url := fmt.Sprintf("/accounts/%d", tc.accountId)
+
 			// make request againt the url
 			request, err := http.NewRequest(http.MethodGet, url, nil)
 			require.NoError(t, err)
+
+			tc.setupAuth(t, request, server.tokenGenerator)
 
 			server.router.ServeHTTP(recorder, request)
 			tc.checkResponse(t, recorder)
