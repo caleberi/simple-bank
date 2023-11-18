@@ -1,0 +1,7 @@
+{
+    "DB_DRIVER":"postgres",
+    "DB_SOURCE":"postgresql://root:secret@localhost:4600/simple_bank?sslmode=disable",
+    "VBANK_ADDR":"localhost:8080",
+    "TOKEN_SYMMETRIC_KEY":12334576898790234758980987654321,
+    "ACCESS_TOKEN_DURATION":"10m"
+}
