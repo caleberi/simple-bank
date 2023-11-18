@@ -15,7 +15,7 @@ var testQueries *Queries
 var err error
 
 func init() {
-	cfg := utils.LoadConfig("../../", "dev", "env")
+	cfg := utils.LoadConfig("../../.", "test", "json")
 	conn, err := sql.Open(cfg.DBDriver, cfg.DBSource)
 	if err != nil {
 		log.Fatal("[ERROR] error opening database connection: ", err)
